@@ -39,23 +39,6 @@ CRGB leds[NUM_LEDS];
 int firstLedRow[NUM_OF_ROWS];
 int ledRowsQueue[NUM_OF_ROWS];
 
-//Find the bits that are 1 in the queue and set the LEDs accordingly
-//void byteQueueToLed(int byteQueue, int row, CRGB frameLeds[NUM_LEDS]){
-//  int bitMask = 1;
-//  for(int i = 0; i < SIZE_OF_ROW; i++){
-//    //Set led to red if bit is 1 and set led to black if bit is 0
-//    if(bitMask & byteQueue == bitMask){
-//      coord point{row, i};
-//      int index = MatrixToLedString(point, SIZE_OF_ROW);
-//      frameLeds[index] = CRGB::Red;
-//    }else{
-//      coord point{row, i};
-//      int index = MatrixToLedString(point, SIZE_OF_ROW);
-//     frameLeds[index] = CRGB::Black;
-//    }
-//    bitMask = bitMask<<1;
-//  }
-//}
 
 int enqueueBit(int byteQueue, int thing) {
   // Value must be 1 or zero
@@ -67,34 +50,6 @@ int enqueueBit(int byteQueue, int thing) {
   }
   return byteQueue;
 }
-
-/*void showFrame(void *parameters){
-  coord point;
-  
-  while(1){
-
-    FastLED.show();
-  
-    for(int i = 0; i < NUM_LEDS; i++){
-      if(leds[i].red > 200){ // If the led is red 
-        //Increase the Led by 1 in the y axis
-        LedStripToMatrix(i, &point); 
-        point.y++;
-        //Make sure you don't address an LED outside of the size of the matrix
-        if(point.y < SIZE_OF_ROW){
-          int index =  MatrixToLedString(point, SIZE_OF_ROW);
-          if (xSemaphoreTake(mutex, 0) == pdTRUE) {
-            leds[index] = CRGB::Red;
-            xSemaphoreGive(mutex);
-          }
-        }
-      }
-    }
-  
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-  }
-   
-}*/
 
 void showFrame(void *parameters){
   
