@@ -48,6 +48,46 @@ uint8_t enqueueBit(uint8_t byteQueue, uint8_t bit) {
   return byteQueue;
 }
 
+//TODO: Make MIDI2LED task spawn tasks using this code example from chatGPT
+// // Define a struct to hold parameters for TaskB
+// typedef struct {
+//     int id;
+//     char message[50];
+// } TaskBParams;
+
+// void TaskB(void *pvParameters)
+// {
+//     TaskBParams *params = (TaskBParams *)pvParameters;
+
+//     while (1)
+//     {
+//         printf("TaskB received: id = %d, message = %s\n", params->id, params->message);
+//         vTaskDelay(pdMS_TO_TICKS(1000)); // Delay 1 second
+//     }
+// }
+
+// void TaskA(void *pvParameters)
+// {
+//     TaskBParams *params = pvPortMalloc(sizeof(TaskBParams)); // use FreeRTOS heap
+//     if (params == NULL) {
+//         printf("Failed to allocate memory for TaskBParams.\n");
+//         vTaskDelete(NULL);
+//     }
+
+//     // Fill in the parameter structure
+//     params->id = 42;
+//     snprintf(params->message, sizeof(params->message), "Hello from TaskA!");
+
+//     // Create TaskB and pass the parameters
+//     if (xTaskCreate(TaskB, "TaskB", configMINIMAL_STACK_SIZE + 100, params, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+//         printf("Failed to create TaskB.\n");
+//         vPortFree(params);  // Clean up if task creation fails
+//     }
+
+//     // TaskA can end here
+//     vTaskDelete(NULL);
+// }
+
 // Show the rendered frame on the LED display
 void showFrame(void *parameters){
   
@@ -81,7 +121,9 @@ void showFrame(void *parameters){
   }
    
 }
+
 // Render the frame 
+// TODO: Remove all mutex's and semaphores since there should be no multithreading
 void setFrame(void *parameters){
   while(1){
     int pitchToIndex;//Take the pitch from MIDI and convert it to the index on the LED matrix
@@ -90,7 +132,7 @@ void setFrame(void *parameters){
     if (xSemaphoreTake(mutex, 0) == pdTRUE) {
       for(int i = 0; i < uxQueueMessagesWaiting( midi_queue ); i++){
           if (xQueueReceive(midi_queue , (void *)&pitchToIndex, 10) == pdTRUE) {
-            //Set led to red if an on note is sent
+            //Set led to read if an on note is sent
             //Serial.println(pitchToIndex);
             // Determine if the integer is on or off
             if((pitchToIndex & ON_BIT_MASK) == ON_BIT_MASK){
@@ -125,6 +167,8 @@ void setup()
     // is received. In this case it's "MyHandleNoteOn".
   midi2.setHandleNoteOff(MyHandleNoteOff); // This command tells the Midi Library 
   pinMode (LED, OUTPUT); // Set Arduino board pin 13 to output
+
+  //TODO: Set all tasks to the CPU not used by the midi controller
   //Pin show Frame task to CPU 0 
   xTaskCreatePinnedToCore(
                         showFrame,   /* Task function. */
@@ -156,7 +200,7 @@ void MyHandleNoteOn(byte channel, byte pitch, byte velocity) {
   //digitalWrite(LED,HIGH);  //Turn debug LED on
  // Serial.println(pitch);
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  // Convert Pitch to index
+  // Convert Pitch to index in array
   uint8_t pitchToIndex = pitch - 36;
   // Add on bit so there is a difference between on and off messages
   pitchToIndex = pitchToIndex | ON_BIT_MASK;
