@@ -34,6 +34,11 @@ typedef struct coord{
   uint8_t y;
 }coord;
 
+typedef struct LED{
+  coord crdnte;
+  // Array of 3 uint8_t for RGB values
+  CRGB * ledArray;
+}leds;
 
 // Define the array of leds
 CRGB leds[NUM_LEDS];
@@ -41,11 +46,12 @@ uint8_t firstLedRow[NUM_OF_ROWS];
 uint8_t ledRowsQueue[NUM_OF_ROWS];
 
 // Use a byte as a queue to determine if LED is on or off
-uint8_t enqueueBit(uint8_t byteQueue, uint8_t bit) {
+// TODO: Revamp the bit queue to make it not rely on bytes and allow for different colors
+uint8_t enqueueBit(uint8_t bitQueue, uint8_t bit) {
   // Value must a boolean
-  byteQueue <<= 1;
-  byteQueue |= bit; //Enqueue bit
-  return byteQueue;
+  bitQueue <<= 1;
+  bitQueue |= bit; //Enqueue bit
+  return bitQueue;
 }
 
 //TODO: Make MIDI2LED task spawn tasks using this code example from chatGPT
@@ -88,34 +94,50 @@ uint8_t enqueueBit(uint8_t byteQueue, uint8_t bit) {
 //     vTaskDelete(NULL);
 // }
 
-// Show the rendered frame on the LED display
-void showFrame(void *parameters){
-  
-  while(1){
-    // Update the LEDs on the screen 
-    FastLED.show();
-    if (xSemaphoreTake(mutex, 0) == pdTRUE) {
-      for(int row = 0; row < NUM_OF_ROWS; row++){
-        //Enqueue the first led row into the queue
-        ledRowsQueue[row] = enqueueBit(ledRowsQueue[row], firstLedRow[row]);
-        int bitMask = 1;
-        for(int col = 0; col < SIZE_OF_ROW; col++){
-          // Create a coord from row and column value
-          coord point{row, col};
-          int index = MatrixToLedString(point, SIZE_OF_ROW);
-          // Set led to red if bit is 1 and set led to black if bit is 0
-          if((bitMask & ledRowsQueue[row]) == bitMask){
-            Serial.println(row);
-            leds[index] = CRGB::Red;
-          }else{
-            leds[index] = CRGB::Black;
-          }
-          bitMask = bitMask<<1;
-        }
+BaseType_t SpawnTask(TaskFunction_t taskFunc, const char *name, uint16_t stackSize, void *params, UBaseType_t priority, TaskHandle_t *taskHandle)
+{
+    BaseType_t result = xTaskCreate(
+        taskFunc,      // Task function pointer
+        name,          // Name
+        stackSize,     // Stack size in words
+        params,        // Parameters to task
+        priority,      // Priority
+        taskHandle     // Task handle (can be NULL)
+    );
 
-      }
-        xSemaphoreGive(mutex);
+    if (result != pdPASS) {
+        printf("Failed to create task '%s'\n", name);
     }
+
+    return result;
+}
+
+
+
+// Show the rendered frame on the LED display
+void DisplayFrame(void *parameters){
+  
+  // Update the LEDs on the screen 
+  FastLED.show();
+  for(int row = 0; row < NUM_OF_ROWS; row++){
+    //Enqueue the first led row into the queue
+    ledRowsQueue[row] = enqueueBit(ledRowsQueue[row], firstLedRow[row]);
+    int bitMask = 1;
+    for(int col = 0; col < SIZE_OF_ROW; col++){
+      // Create a coord from row and column value
+      coord point{row, col};
+      int index = MatrixToLedString(point, SIZE_OF_ROW);
+      // Set led to red if bit is 1 and set led to black if bit is 0
+      // TODO: Get the color from another value
+      if((bitMask & ledRowsQueue[row]) == bitMask){
+        Serial.println(row);
+        leds[index] = CRGB::Red;
+      }else{
+        leds[index] = CRGB::Black;
+      }
+      bitMask = bitMask<<1;
+    }
+  
     // Delay the task
     vTaskDelay(showFrameDelay / portTICK_PERIOD_MS);
   }
@@ -124,26 +146,24 @@ void showFrame(void *parameters){
 
 // Render the frame 
 // TODO: Remove all mutex's and semaphores since there should be no multithreading
-void setFrame(void *parameters){
+void RenderFrame(void *parameters){
   while(1){
     int pitchToIndex;//Take the pitch from MIDI and convert it to the index on the LED matrix
     coord point; //XY coords of LED
     // Take the semaphore before putting messages in the queue
-    if (xSemaphoreTake(mutex, 0) == pdTRUE) {
-      for(int i = 0; i < uxQueueMessagesWaiting( midi_queue ); i++){
-          if (xQueueReceive(midi_queue , (void *)&pitchToIndex, 10) == pdTRUE) {
-            //Set led to read if an on note is sent
-            //Serial.println(pitchToIndex);
-            // Determine if the integer is on or off
-            if((pitchToIndex & ON_BIT_MASK) == ON_BIT_MASK){
-              firstLedRow[(pitchToIndex & (~ON_BIT_MASK))] = ON;//remove "ON" bit component
-            }else{
-              firstLedRow[pitchToIndex] = OFF;
-            }   
+    for(int i = 0; i < uxQueueMessagesWaiting( midi_queue ); i++){
+        if (xQueueReceive(midi_queue , (void *)&pitchToIndex, 10) == pdTRUE) {
+          //Set led to read if an on note is sent
+          //Serial.println(pitchToIndex);
+          // Determine if the integer is on or off
+          if((pitchToIndex & ON_BIT_MASK) == ON_BIT_MASK){
+            firstLedRow[(pitchToIndex & (~ON_BIT_MASK))] = ON;//remove "ON" bit component
+          }else{
+            firstLedRow[pitchToIndex] = OFF;
           }   
-      }
-      xSemaphoreGive(mutex);
-    } 
+        }
+    }
+    SpawnTask(DisplayFrame,"Display Frame")
     vTaskDelay(setFrameDelay / portTICK_PERIOD_MS);
   }
 }
@@ -162,10 +182,10 @@ void setup()
   Serial.begin(115200);
   FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);  // GRB ordering is assumed
   midi2.begin(MIDI_CHANNEL_OMNI);  // Listen to all incoming messages
-  midi2.setHandleNoteOn(MyHandleNoteOn); // This is important!! This command
+  midi2.setHandleNoteOn(HandleNoteOn); // This is important!! This command
     // tells the Midi Library which function you want to call when a NOTE ON command
     // is received. In this case it's "MyHandleNoteOn".
-  midi2.setHandleNoteOff(MyHandleNoteOff); // This command tells the Midi Library 
+  midi2.setHandleNoteOff(HandleNoteOff); // This command tells the Midi Library 
   pinMode (LED, OUTPUT); // Set Arduino board pin 13 to output
 
   //TODO: Set all tasks to the CPU not used by the midi controller
@@ -177,7 +197,7 @@ void setup()
                         NULL,        /* parameter of the task */
                         1,           /* priority of the task */
                         NULL,      /* Task handle to keep track of created task */
-                        pro_cpu);          /* pin task to core 0 */
+                        app_cpu);          /* pin task to core 0 */
   //Pin Set Frame task to CPU 1
   xTaskCreatePinnedToCore(
                         setFrame,   /* Task function. */
@@ -186,17 +206,20 @@ void setup()
                         NULL,        /* parameter of the task */
                         2,           /* priority of the task */
                         &setFrameTask,      /* Task handle to keep track of created task */
-                        pro_cpu);       /* pin task to core 0 */
+                        app_cpu);       /* pin task to core 0 */
+    
+
 }
 
 void loop()
 {
     // Read incoming MIDI messages
+    // TODO: Maybe edit to use a pin interrupt instead
     midi2.read();
 }
 
-//ISR for when a note on event is detected
-void MyHandleNoteOn(byte channel, byte pitch, byte velocity) { 
+//Callback for when an on note is written
+void HandleNoteOn(byte channel, byte pitch, byte velocity) { 
   //digitalWrite(LED,HIGH);  //Turn debug LED on
  // Serial.println(pitch);
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -209,10 +232,11 @@ void MyHandleNoteOn(byte channel, byte pitch, byte velocity) {
   if (xQueueSendFromISR(midi_queue , (void *)&pitchToIndex, &xHigherPriorityTaskWoken) != pdTRUE) {
     Serial.println("Queue Full");
   }
+  SpawnTask(RenderFrame,"Render Frame",10000,midi_queue,)
  
 }
-//ISR for when a note off event is detected
-void MyHandleNoteOff(byte channel, byte pitch, byte velocity) { 
+//Callback for when an off note is read
+void HandleNoteOff(byte channel, byte pitch, byte velocity) { 
   //digitalWrite(LED,LOW);  //Turn debug LED off
   //Serial.println(pitch);
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
