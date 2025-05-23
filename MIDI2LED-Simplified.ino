@@ -19,7 +19,6 @@ static const BaseType_t app_cpu = 1; // Assign app_cpu to core 1
 static TaskHandle_t setFrameTask = NULL;
 static QueueHandle_t midi_queue; 
 #define MIDI_QUEUE_LEN 20 // Number of slots in byte queue
-static SemaphoreHandle_t mutex; // Mutex for the byte queue
 
 //Delay in milliseconds
 static const uint32_t showFrameDelay = 100; 
@@ -96,15 +95,18 @@ uint8_t enqueueBit(uint8_t bitQueue, uint8_t bit) {
 
 BaseType_t SpawnTask(TaskFunction_t taskFunc, const char *name, uint16_t stackSize, void *params, UBaseType_t priority, TaskHandle_t *taskHandle)
 {
-    BaseType_t result = xTaskCreate(
+    if( *taskHandle == NULL){
+      BaseType_t result = xTaskCreate(
         taskFunc,      // Task function pointer
         name,          // Name
         stackSize,     // Stack size in words
         params,        // Parameters to task
         priority,      // Priority
         taskHandle     // Task handle (can be NULL)
-    );
-
+      );
+    }else{
+      printf("Task '%s' already running\n",name);
+    }
     if (result != pdPASS) {
         printf("Failed to create task '%s'\n", name);
     }
@@ -137,9 +139,6 @@ void DisplayFrame(void *parameters){
       }
       bitMask = bitMask<<1;
     }
-  
-    // Delay the task
-    vTaskDelay(showFrameDelay / portTICK_PERIOD_MS);
   }
    
 }
@@ -147,25 +146,24 @@ void DisplayFrame(void *parameters){
 // Render the frame 
 // TODO: Remove all mutex's and semaphores since there should be no multithreading
 void RenderFrame(void *parameters){
-  while(1){
-    int pitchToIndex;//Take the pitch from MIDI and convert it to the index on the LED matrix
-    coord point; //XY coords of LED
-    // Take the semaphore before putting messages in the queue
-    for(int i = 0; i < uxQueueMessagesWaiting( midi_queue ); i++){
-        if (xQueueReceive(midi_queue , (void *)&pitchToIndex, 10) == pdTRUE) {
-          //Set led to read if an on note is sent
-          //Serial.println(pitchToIndex);
-          // Determine if the integer is on or off
-          if((pitchToIndex & ON_BIT_MASK) == ON_BIT_MASK){
-            firstLedRow[(pitchToIndex & (~ON_BIT_MASK))] = ON;//remove "ON" bit component
-          }else{
-            firstLedRow[pitchToIndex] = OFF;
-          }   
-        }
-    }
-    SpawnTask(DisplayFrame,"Display Frame")
-    vTaskDelay(setFrameDelay / portTICK_PERIOD_MS);
+  
+  int pitchToIndex;//Take the pitch from MIDI and convert it to the index on the LED matrix
+  coord point; //XY coords of LED
+  // Take the semaphore before putting messages in the queue
+  for(int i = 0; i < uxQueueMessagesWaiting( midi_queue ); i++){
+      if (xQueueReceive(midi_queue , (void *)&pitchToIndex, 10) == pdTRUE) {
+        //Set led to read if an on note is sent
+        //Serial.println(pitchToIndex);
+        // Determine if the integer is on or off
+        if((pitchToIndex & ON_BIT_MASK) == ON_BIT_MASK){
+          firstLedRow[(pitchToIndex & (~ON_BIT_MASK))] = ON;//remove "ON" bit component
+        }else{
+          firstLedRow[pitchToIndex] = OFF;
+        }   
+      }
   }
+  SpawnTask(DisplayFrame,"Display Frame")
+ 
 }
    
 
@@ -175,8 +173,7 @@ void setup()
   for( uint8_t i = 0; i < NUM_LEDS; i++){
     leds[i] = CRGB::Black;
   }
-  // Create a mutex for the message queue
-  mutex = xSemaphoreCreateMutex();
+  
   // Create a queue of length of the number of rows
   midi_queue  = xQueueCreate(MIDI_QUEUE_LEN, sizeof(uint8_t));
   Serial.begin(115200);
@@ -187,27 +184,6 @@ void setup()
     // is received. In this case it's "MyHandleNoteOn".
   midi2.setHandleNoteOff(HandleNoteOff); // This command tells the Midi Library 
   pinMode (LED, OUTPUT); // Set Arduino board pin 13 to output
-
-  //TODO: Set all tasks to the CPU not used by the midi controller
-  //Pin show Frame task to CPU 0 
-  xTaskCreatePinnedToCore(
-                        showFrame,   /* Task function. */
-                        "Show Frame",     /* name of task. */
-                        10000,       /* Stack size of task */
-                        NULL,        /* parameter of the task */
-                        1,           /* priority of the task */
-                        NULL,      /* Task handle to keep track of created task */
-                        app_cpu);          /* pin task to core 0 */
-  //Pin Set Frame task to CPU 1
-  xTaskCreatePinnedToCore(
-                        setFrame,   /* Task function. */
-                        "Set Frame",     /* name of task. */
-                        10000,       /* Stack size of task */
-                        NULL,        /* parameter of the task */
-                        2,           /* priority of the task */
-                        &setFrameTask,      /* Task handle to keep track of created task */
-                        app_cpu);       /* pin task to core 0 */
-    
 
 }
 
